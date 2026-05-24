@@ -5,14 +5,15 @@ import struct
 import urequests
 import ssd1306
 import os
+from wifi_manager import WifiManager
 from utime import sleep, ticks_ms
 
 # =========================================================
 # CONFIG
 # =========================================================
 
-WIFI_SSID = "INFINITUM99B5"
-WIFI_PASSWORD = "73AumyVwck"
+
+
 
 SUPABASE_URL = "https://ezsomflzqxjmahohabqk.supabase.co"
 SUPABASE_TABLE = "sensor_data"
@@ -69,24 +70,28 @@ state = BOOT
 # WIFI INIT
 # =========================================================
 
+WIFI_SSID = "ProyectoEpic"
+WIFI_PASSWORD = "ProyectoEpic2026"
+wm = WifiManager(ssid = WIFI_SSID, password = WIFI_PASSWORD, oled = oled)
+
 def init_wifi():
     global wifi_ok, wifi_ip, wifi_ch
 
     try:
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
-
+        wm.connect()
         t = 0
-        while not wlan.isconnected() and t < 20:
+        while not wm.is_connected() and t < 20:
             screen(["WIFI CONNECT", str(t)])
             sleep(1)
             t += 1
 
-        if wlan.isconnected():
+        if wm.is_connected():
             wifi_ok = True
-            wifi_ip = wlan.ifconfig()[0]
-            wifi_ch = wlan.config("channel")
+            
+            wifi_ip = wm.wlan_sta.ifconfig()[0]
+            
+            # get current channel
+            wifi_ch = wm.wlan_sta.config("channel")
         else:
             wifi_ok = False
 
