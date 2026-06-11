@@ -19,6 +19,11 @@ INTERVAL_US = int(1000000 / SAMPLE_RATE_HZ)
 # ==========================================
 i2c = I2C(0, scl=Pin(6), sda=Pin(5))
 oled = ssd1306.SSD1306_I2C(128, 64, i2c)
+
+# changing screen orientation 
+oled.write_cmd(0xA0)
+oled.write_cmd(0xC0)
+
 cs = Pin(1, Pin.OUT, value=1)
 spi = SPI(1, baudrate=2000000, polarity=0, phase=0, sck=Pin(7), mosi=Pin(9), miso=Pin(8))
 led = Pin(21, Pin.OUT)
@@ -68,7 +73,6 @@ def oled_thread():
     while True:
         oled.fill(0)
         oled.text("EPIC SENSOR", 0, 0)
-        oled.text("128Hz ACTIVE", 0, 12)
         oled.text("X:{:.3f}".format(current_data["x"]/256000), 0, 28)
         oled.text("Y:{:.3f}".format(current_data["y"]/256000), 0, 40)
         oled.text(current_data["status"], 0, 56)
