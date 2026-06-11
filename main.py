@@ -9,7 +9,7 @@ import _thread
 # ==========================================
 # CONFIG
 # ==========================================
-CHANNEL = 11
+CHANNEL = 6
 MAESTRO_MAC = b'\x80\xb5\x4e\xf8\x2d\x6c'
 SAMPLE_RATE_HZ = 128
 INTERVAL_US = int(1000000 / SAMPLE_RATE_HZ)
