@@ -9,7 +9,7 @@ import _thread
 # ==========================================
 # CONFIG
 # ==========================================
-CHANNEL = 1
+CHANNEL = None
 MAESTRO_MAC = b'\x80\xb5\x4e\xf8\x2d\x6c'
 SAMPLE_RATE_HZ = 128
 INTERVAL_US = int(1000000 / SAMPLE_RATE_HZ)
@@ -37,31 +37,24 @@ sensing_active = True
 # ==========================================
 # ESP-NOW
 # ==========================================
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
+def read_saved_channel() -> int:
+    try:
+        with open("channel.txt", "r") as f:
+            content = f.read().strip()
+            return int(content)
+    except:
+        return 1
 
-mac = wlan.config('mac')
-mac_str = ':'.join('{:02X}'.format(b) for b in mac)
+def save_channel(channel: int) -> None:
+    try:
+        with open("channel.txt", "w") as f:
+            f.write(str(channel))
+    except Exception as e:
+        print(f"Error saving channel: {e}")
 
-oled.fill(0)
-oled.text('SENSOR MAC', 0, 0)
-oled.text(mac_str[:15], 0, 16)
-if len(mac_str) > 15:
-    oled.text(mac_str[15:], 0, 28)
-oled.show()
-sleep(5)
 
-en = espnow.ESPNow()
-en.active(True)
-
-try:
-    en.add_peer(MAESTRO_MAC)
-except:
-    pass
-
-CHANNEL = 1
-
-for channel in range(1, 14):
+def channel_connect(channel: int) -> bool:
+    global CHANNEL
     wlan.config(channel=channel)
 
     oled.fill(0)
@@ -75,24 +68,54 @@ for channel in range(1, 14):
         en.send(MAESTRO_MAC, b"DISCOVER")
         host, msg = en.recv(1000)
 
-        if msg == b"ACK":
-            CHANNEL = channel
+        if msg.split(b":")[0] == b"ACK":
+            CHANNEL = int(msg.split(b":")[1])
+            save_channel(CHANNEL)
 
             oled.fill(0)
             oled.text("FOUND", 0, 0)
             oled.text("CH:" + str(CHANNEL), 0, 14)
             oled.show()
             sleep(1)
-            break
+            return True
+        else:
+            return False
 
     except:
-        pass
+        return False
+
+
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+
+en = espnow.ESPNow()
+en.active(True)
+
+try:
+    en.add_peer(MAESTRO_MAC)
+except:
+    pass
+
+CHANNEL = read_saved_channel()
+
+if not channel_connect(CHANNEL):
+
+    for channel in range(1, 14):
+
+        answer = channel_connect(channel= channel)
+
+        if answer:
+            break
+        else:
+            continue
 
 wlan.config(channel=CHANNEL)
 
 # ==========================================
 # SENSOR FUNCS
 # ==========================================
+
+
 def write_reg(reg, value):
     cs.value(0)
     spi.write(bytearray([(reg << 1) | 0, value]))
