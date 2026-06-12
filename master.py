@@ -21,7 +21,7 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 NODE_ID = "EPIC_NODE_01"
 
-SENSOR_MAC = b'\x34\x85\x18\xab\xcd\xef'
+SENSOR_MAC = b'\xE0\x72\xA1\xFC\x45\xC8'
 
 # =========================================================
 # SWITCH CONFIG (GPIO 1 a GND)
@@ -34,6 +34,11 @@ switch_upload = Pin(1, Pin.IN, Pin.PULL_UP)
 
 i2c = I2C(0, scl=Pin(41), sda=Pin(42))
 oled = ssd1306.SSD1306_I2C(128, 64, i2c)
+
+# change oled orientation
+
+oled.write_cmd(0XA0)
+oled.write_cmd(0XC0)
 
 def screen(lines):
     oled.fill(0)
@@ -332,6 +337,11 @@ while True:
         host, msg = en.recv(0)
 
         if msg:
+
+            if msg == b"DISCOVER":
+                en.send(host, b"ACK")
+                continue
+
             x, y, z = struct.unpack("iii", msg)
             last_x = x
             last_y = y

@@ -9,7 +9,7 @@ import _thread
 # ==========================================
 # CONFIG
 # ==========================================
-CHANNEL = 6
+CHANNEL = 1
 MAESTRO_MAC = b'\x80\xb5\x4e\xf8\x2d\x6c'
 SAMPLE_RATE_HZ = 128
 INTERVAL_US = int(1000000 / SAMPLE_RATE_HZ)
@@ -39,13 +39,56 @@ sensing_active = True
 # ==========================================
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
-wlan.config(channel=CHANNEL)
+
+mac = wlan.config('mac')
+mac_str = ':'.join('{:02X}'.format(b) for b in mac)
+
+oled.fill(0)
+oled.text('SENSOR MAC', 0, 0)
+oled.text(mac_str[:15], 0, 16)
+if len(mac_str) > 15:
+    oled.text(mac_str[15:], 0, 28)
+oled.show()
+sleep(5)
+
 en = espnow.ESPNow()
 en.active(True)
+
 try:
     en.add_peer(MAESTRO_MAC)
 except:
     pass
+
+CHANNEL = 1
+
+for channel in range(1, 14):
+    wlan.config(channel=channel)
+
+    oled.fill(0)
+    oled.text("Connecting...", 0, 0)
+    oled.text("CH:" + str(channel), 0, 14)
+    oled.show()
+
+    sleep(0.3)
+
+    try:
+        en.send(MAESTRO_MAC, b"DISCOVER")
+        host, msg = en.recv(1000)
+
+        if msg == b"ACK":
+            CHANNEL = channel
+
+            oled.fill(0)
+            oled.text("FOUND", 0, 0)
+            oled.text("CH:" + str(CHANNEL), 0, 14)
+            oled.show()
+            sleep(1)
+            break
+
+    except:
+        pass
+
+wlan.config(channel=CHANNEL)
 
 # ==========================================
 # SENSOR FUNCS
@@ -73,6 +116,7 @@ def oled_thread():
     while True:
         oled.fill(0)
         oled.text("EPIC SENSOR", 0, 0)
+        oled.text(f"Chanel: {CHANNEL}", 0, 14)
         oled.text("X:{:.3f}".format(current_data["x"]/256000), 0, 28)
         oled.text("Y:{:.3f}".format(current_data["y"]/256000), 0, 40)
         oled.text(current_data["status"], 0, 56)
@@ -85,7 +129,6 @@ def oled_thread():
 write_reg(0x2D, 0x00) # Wake up
 _thread.start_new_thread(oled_thread, ())
 
-print("Muestreo a 128Hz iniciado...")
 next_sample = ticks_us()
 
 while True:
