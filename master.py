@@ -55,6 +55,11 @@ packet_count = 0
 saved_count = 0
 upload_ok = 0
 upload_fail = 0
+rx_count = 0
+sd_saved_count = 0
+upload_count = 0
+MAX_BUFFER = 500
+recording_enabled = False
 
 last_upload_status = "NONE"
 last_batch_upload = ticks_ms()
@@ -63,22 +68,33 @@ last_batch_upload = ticks_ms()
 data_buffer = []
 buffer_lock = _thread.allocate_lock()
 
+UPLOAD_BATCH_SIZE = 50
+upload_request = False
+state_lock = _thread.allocate_lock()
+
 # =========================================================
 # FUNCIONES DEL PUNTERO
 # =========================================================
-def leer_puntero() -> int:
+def cargar_estado():
+    estado = {"rx":0, "sd":0, "upload":0}
     try:
-        with open("/sd/puntero.txt", "r") as f:
-            return int(f.read().strip())
+        with open("/sd/estado.txt", "r") as f:
+            for line in f:
+                k,v = line.strip().split(":")
+                estado[k] = int(v)
     except:
-        return 1
+        pass
+    return estado
 
-def guardar_puntero(linea: int):
+
+def guardar_estado():
     try:
-        with open("/sd/puntero.txt", "w") as f:
-            f.write(str(linea))
+        with open("/sd/estado.txt", "w") as f:
+            f.write("rx:" + str(rx_count) + "\n")
+            f.write("sd:" + str(sd_saved_count) + "\n")
+            f.write("upload:" + str(upload_count) + "\n")
     except Exception as e:
-        print("Error saving pointer:", e)
+        print("STATE SAVE ERROR", e)
 
 # =========================================================
 # WIFI, SD & ESPNOW INIT
@@ -122,6 +138,13 @@ def init_sd():
         sd_ok = False
         print("SD ERROR:", e)
 
+def init_state():
+    global rx_count, sd_saved_count, upload_count
+    estado = cargar_estado()
+    rx_count = estado["rx"]
+    sd_saved_count = estado["sd"]
+    upload_count = estado["upload"]
+
 def init_espnow():
     global en, espnow_ok
     try:
@@ -138,24 +161,29 @@ def init_espnow():
 # BATCH UPLOAD CON PUNTERO
 # =========================================================
 def upload_batch():
-    global upload_ok, upload_fail, last_upload_status
+    global upload_ok, upload_fail, last_upload_status, upload_count
     if not wifi_ok or not sd_ok: return
 
     r = None
     try:
-        linea_inicio = leer_puntero()
         lines = []
 
         with open("/sd/data.csv", "r") as f:
-            for _ in range(linea_inicio):
-                if not f.readline(): break
-            
-            for _ in range(50):
+            # Skip header
+            header = f.readline()
+            # Skip lines up to upload_count
+            for _ in range(upload_count):
+                if not f.readline():
+                    break
+
+            for _ in range(UPLOAD_BATCH_SIZE):
                 line = f.readline()
-                if not line: break
+                if not line:
+                    break
                 lines.append(line)
 
-        if len(lines) == 0: return
+        if len(lines) == 0: 
+            return
 
         payload = []
         for line in lines:
@@ -170,7 +198,8 @@ def upload_batch():
                 })
             except: pass
 
-        if len(payload) == 0: return
+        if len(payload) == 0: 
+            return
 
         url = SUPABASE_URL + "/rest/v1/" + SUPABASE_TABLE
         headers = {
@@ -183,11 +212,10 @@ def upload_batch():
         r = urequests.post(url, json=payload, headers=headers, timeout=2)
 
         if r.status_code in [200, 201]:
+            upload_count += len(payload)
             upload_ok += len(payload)
             last_upload_status = "OK"
-            
-            nuevo_puntero = linea_inicio + len(payload)
-            guardar_puntero(nuevo_puntero)
+            guardar_estado()
         else:
             upload_fail += len(payload)
             last_upload_status = f"F:{r.status_code}"
@@ -202,12 +230,22 @@ def upload_batch():
             except: pass
         gc.collect()
 
+def upload_thread():
+    global upload_request
+    while True:
+        if upload_request:
+            upload_request = False
+            try:
+                upload_batch()
+            except Exception as e:
+                print("UPLOAD THREAD ERROR", e)
+        sleep(1)
+
 # =========================================================
 # HILO SECUNDARIO (SD, OLED REORGANIZADO, CLOUD)
 # =========================================================
 def background_thread():
-    global saved_count, last_batch_upload
-
+    global saved_count, last_batch_upload, upload_request, recording_enabled, temp_buffer, sd_saved_count
     while True:
         # 1. Refrescar Display Reorganizado
         str_w = "OK" if wifi_ok else "NO"
@@ -215,27 +253,20 @@ def background_thread():
         str_e = "OK" if espnow_ok else "NO"
         
         oled.fill(0)
-        oled.text("EPIC CENTRAL", 0, 0)
+        # Estados y Canal
+        oled.text(f"W:{str_w} S:{str_sd} E:{str_e}", 0, 0)
+        oled.text(f"CH: {wifi_ch}", 0, 10)
+        if recording_enabled:
+            oled.text("REC", 100, 10)
         
-        # Fila de estados junta
-        oled.text(f"W:{str_w} SD:{str_sd} E:{str_e}", 0, 10)
+        # Ejes X e Y
+        oled.text(f"X:{last_x} Y:{last_y}", 0, 22)
         
-        # Canal de Wi-Fi solo
-        oled.text(f"CH: {wifi_ch}", 0, 20)
-        
-        # Ejes X e Y compactados en una sola fila
-        oled.text(f"X:{last_x} Y:{last_y}", 0, 30)
-        
-        # NUEVO: Contadores en tiempo real en la pantalla
-        oled.text(f"RCV: {packet_count}", 0, 40)
-        oled.text(f"SVD: {saved_count}", 0, 50)
-        
-        # Estado de la nube al final
-        oled.text(f"UP:{last_upload_status} V:{upload_ok}", 0, 58)
-        
-        if switch_upload.value() == 0: 
-            oled.text("->", 112, 0)
-            
+        # Contadores con más espacio para no saturar el final
+        oled.text(f"RX: {rx_count}", 0, 34)
+        oled.text(f"SD: {sd_saved_count}", 0, 46)
+        oled.text(f"UP: {upload_ok} {last_upload_status}", 0, 57)
+
         oled.show()
 
         # 2. Vaciar el Buffer de RAM hacia la SD
@@ -244,12 +275,14 @@ def background_thread():
                 temp_buffer = list(data_buffer)
                 data_buffer.clear()
 
-            if sd_ok and switch_upload.value() == 0:
+            if sd_ok and recording_enabled:
                 try:
                     with open("/sd/data.csv", "a") as f:
                         for sample in temp_buffer:
                             f.write("{},{},{},{}\n".format(sample[0], sample[1], sample[2], sample[3]))
                     saved_count += len(temp_buffer)
+                    sd_saved_count += len(temp_buffer)
+                    guardar_estado()
                 except Exception as e:
                     print("SD WRITE ERROR:", e)
 
@@ -257,7 +290,7 @@ def background_thread():
         if ticks_diff(ticks_ms(), last_batch_upload) > 5000:
             last_batch_upload = ticks_ms()
             if switch_upload.value() == 0:
-                upload_batch()
+                upload_request = True
 
         sleep(0.05)
 
@@ -268,11 +301,13 @@ screen(["BOOTING..."])
 sleep(1)
 init_wifi()
 init_sd()
+init_state()
 init_espnow()
 screen(["READY"])
 sleep(1)
 
 _thread.start_new_thread(background_thread, ())
+_thread.start_new_thread(upload_thread, ())
 
 # =========================================================
 # LOOP PRINCIPAL: CORE 0 RECEPTOR (128Hz)
@@ -292,10 +327,15 @@ while True:
                 x, y, z = struct.unpack("iii", msg)
                 last_x, last_y, last_z = x, y, z
                 packet_count += 1
+                rx_count += 1
+                if rx_count % 100 == 0:
+                    guardar_estado()
+                recording_enabled = (switch_upload.value() == 0)
                 
-                if switch_upload.value() == 0:
+                if recording_enabled:
                     with buffer_lock:
-                        data_buffer.append((ticks_ms(), x, y, z))
+                        if len(data_buffer) < MAX_BUFFER:
+                            data_buffer.append((ticks_ms(), x, y, z))
 
                 if packet_count % 500 == 0:
                     print(f"Packets Recv: {packet_count} | Saved SD: {saved_count}")
